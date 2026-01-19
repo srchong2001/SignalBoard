@@ -1,7 +1,6 @@
 export interface Env {
   DB: D1Database;
   VECTORIZE: VectorizeIndex;
-  FEEDBACK_QUEUE: Queue;
   AI: Ai;
   DEV_MODE: string;
   FREE_PLAN: string;
@@ -407,7 +406,9 @@ async function processFeedbackMessage(env: Env, feedbackId: string): Promise<voi
   }
 }
 
-async function generateMockFeedback(env: Env): Promise<{ inserted: number; enqueued: number }> {
+async function generateMockFeedback(
+  env: Env
+): Promise<{ inserted: number; enqueued: number; ids: string[] }> {
   const freePlan = env.FREE_PLAN === "true";
   const maxItems = freePlan ? 150 : 500;
   const total = randomInt(100, maxItems);
@@ -449,7 +450,7 @@ async function generateMockFeedback(env: Env): Promise<{ inserted: number; enque
   const authors = ["Alex", "Sam", "Jordan", "Priya", "Lee", "Taylor", "Casey", "Morgan"];
 
   const inserts: D1PreparedStatement[] = [];
-  const messages: { feedback_id: string }[] = [];
+  const messages: string[] = [];
 
   for (let i = 0; i < total; i += 1) {
     const id = crypto.randomUUID();
@@ -462,14 +463,25 @@ async function generateMockFeedback(env: Env): Promise<{ inserted: number; enque
         "INSERT INTO feedback_items (id, source, author, text, created_at) VALUES (?, ?, ?, ?, ?)"
       ).bind(id, source, author, text, createdAt)
     );
-    messages.push({ feedback_id: id });
+    messages.push(id);
   }
 
   await env.DB.batch(inserts);
-  for (const message of messages) {
-    await env.FEEDBACK_QUEUE.send(message);
-  }
-  return { inserted: total, enqueued: total };
+  return { inserted: total, enqueued: 0, ids: messages };
+}
+
+async function processFeedbackIds(env: Env, ids: string[], ctx: ExecutionContext) {
+  ctx.waitUntil(
+    (async () => {
+      for (const id of ids) {
+        try {
+          await processFeedbackMessage(env, id);
+        } catch (error) {
+          console.log("Processing error", error);
+        }
+      }
+    })()
+  );
 }
 
 async function handleOverview(env: Env): Promise<Response> {
@@ -759,7 +771,11 @@ function digestPage(): Response {
   return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
 }
 
-async function handleIngest(request: Request, env: Env): Promise<Response> {
+async function handleIngest(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<Response> {
   const body = await parseJsonBody<{ source: string; author: string; text: string }>(request);
   const id = crypto.randomUUID();
   const source = SOURCE_OPTIONS.includes(body.source as (typeof SOURCE_OPTIONS)[number])
@@ -771,11 +787,15 @@ async function handleIngest(request: Request, env: Env): Promise<Response> {
   )
     .bind(id, source, body.author || "anon", body.text, createdAt)
     .run();
-  await env.FEEDBACK_QUEUE.send({ feedback_id: id });
+  processFeedbackIds(env, [id], ctx);
   return jsonResponse({ id });
 }
 
-async function handleRequest(request: Request, env: Env): Promise<Response> {
+async function handleRequest(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
 
@@ -789,12 +809,13 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   if (path === "/api/mock/generate") {
     if (request.method !== "POST") return methodNotAllowed();
     const result = await generateMockFeedback(env);
-    return jsonResponse(result);
+    processFeedbackIds(env, result.ids, ctx);
+    return jsonResponse({ inserted: result.inserted, enqueued: result.enqueued });
   }
 
   if (path === "/api/ingest") {
     if (request.method !== "POST") return methodNotAllowed();
-    return handleIngest(request, env);
+    return handleIngest(request, env, ctx);
   }
 
   if (path === "/api/dashboard/overview") {
@@ -867,16 +888,7 @@ async function handleScheduled(env: Env): Promise<void> {
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    return handleRequest(request, env);
-  },
-  async queue(batch: MessageBatch<{ feedback_id: string }>, env: Env, ctx: ExecutionContext) {
-    for (const message of batch.messages) {
-      try {
-        await processFeedbackMessage(env, message.body.feedback_id);
-      } catch (error) {
-        console.log("Queue processing error", error);
-      }
-    }
+    return handleRequest(request, env, ctx);
   },
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     try {

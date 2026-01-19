@@ -15,14 +15,6 @@ database_id = "8e774286-4e04-4bde-b8a3-7ddc2c6213ba"
 binding = "VECTORIZE"
 index_name = "feedback_embeddings"
 
-[[queues.producers]]
-binding = "FEEDBACK_QUEUE"
-queue = "feedback-processing-queue"
-
-[[queues.consumers]]
-queue = "feedback-processing-queue"
-max_batch_size = 10
-max_batch_timeout = 5
 
 [ai]
 binding = "AI"

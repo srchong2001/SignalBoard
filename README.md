@@ -7,7 +7,7 @@ SignalBoard is a Cloudflare Workers MVP that aggregates product feedback, cluste
 - Cloudflare Worker API + UI
 - D1 (SQLite) storage with migrations
 - Vectorize index for embeddings and clustering
-- Queue consumer for async processing
+- Async processing (no Queues on free plan)
 - Cron trigger for daily digest generation
 - Minimal UI (HTML + vanilla JS)
 
@@ -39,12 +39,6 @@ wrangler d1 migrations apply signalboard-db
 
 ```bash
 wrangler vectorize create feedback_embeddings --dimensions=768 --metric=cosine
-```
-
-### Create Queue
-
-```bash
-wrangler queues create feedback-processing-queue
 ```
 
 ## Deploy
@@ -115,6 +109,5 @@ Update the placeholders in `wrangler.toml`:
 
 - `database_id` for D1
 - Vectorize index name (default: `feedback_embeddings`)
-- Queue name (default: `feedback-processing-queue`)
 
 Cron trigger runs at `0 14 * * *` (14:00 UTC) which is 9am America/New_York during standard time.
