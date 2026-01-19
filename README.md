@@ -54,10 +54,10 @@ wrangler deploy
 
 ## API endpoints
 
-### Generate mock data
+### Seed fixed mock data
 
 ```bash
-curl -X POST http://127.0.0.1:8787/api/mock/generate
+curl -X POST http://127.0.0.1:8787/api/mock/seed
 ```
 
 ### Ingest a single item

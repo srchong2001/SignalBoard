@@ -27,6 +27,7 @@ type OverviewResponse = {
   top_clusters: Array<{
     cluster_id: string;
     title: string | null;
+    theme_summary: string | null;
     count: number;
     last_seen_at: string | null;
   }>;
@@ -71,6 +72,151 @@ type DigestResponse = {
 };
 
 const SOURCE_OPTIONS = ["support", "discord", "github", "email", "twitter", "forum"] as const;
+const SEEDED_MOCK_DATA = [
+  {
+    id: "fb-001",
+    source: "github",
+    author: "alice-dev",
+    created_at: "2026-01-14T09:12:00Z",
+    text:
+      "API responses are intermittently returning 504 errors under moderate load. This started after the last deploy.",
+  },
+  {
+    id: "fb-002",
+    source: "support",
+    author: "customer_4921",
+    created_at: "2026-01-14T10:45:00Z",
+    text: "Our production app is timing out when calling your API. We didn’t change anything on our end.",
+  },
+  {
+    id: "fb-003",
+    source: "discord",
+    author: "latency_issues",
+    created_at: "2026-01-14T11:02:00Z",
+    text: "Anyone else seeing super slow API responses today? P95 latency feels way worse.",
+  },
+  {
+    id: "fb-004",
+    source: "forum",
+    author: "new_user_88",
+    created_at: "2026-01-13T16:21:00Z",
+    text: "Getting started docs are confusing. I couldn’t figure out how to generate an API token.",
+  },
+  {
+    id: "fb-005",
+    source: "email",
+    author: "cto@startup.io",
+    created_at: "2026-01-13T17:10:00Z",
+    text:
+      "We struggled onboarding engineers because the documentation jumps between basic and advanced concepts.",
+  },
+  {
+    id: "fb-006",
+    source: "twitter",
+    author: "@buildfast",
+    created_at: "2026-01-13T18:03:00Z",
+    text:
+      "Love the product but the docs need a serious overhaul. Took us hours to find auth examples.",
+  },
+  {
+    id: "fb-007",
+    source: "support",
+    author: "billing_user_123",
+    created_at: "2026-01-12T09:40:00Z",
+    text: "I was charged twice this month and support hasn’t resolved it yet.",
+  },
+  {
+    id: "fb-008",
+    source: "email",
+    author: "finance@enterprise.com",
+    created_at: "2026-01-12T10:15:00Z",
+    text: "Our invoice includes usage we can’t account for. This is blocking internal approval.",
+  },
+  {
+    id: "fb-009",
+    source: "discord",
+    author: "angry_payer",
+    created_at: "2026-01-12T10:55:00Z",
+    text: "Billing dashboard doesn’t match actual usage. This is pretty concerning.",
+  },
+  {
+    id: "fb-010",
+    source: "github",
+    author: "mobile-dev",
+    created_at: "2026-01-11T08:33:00Z",
+    text: "The Android SDK crashes when initializing on Android 14 devices.",
+  },
+  {
+    id: "fb-011",
+    source: "support",
+    author: "app_team_lead",
+    created_at: "2026-01-11T09:02:00Z",
+    text: "Our Android app is crashing on startup after upgrading the SDK.",
+  },
+  {
+    id: "fb-012",
+    source: "forum",
+    author: "sdk_user",
+    created_at: "2026-01-11T09:47:00Z",
+    text: "Any workaround for Android 14 crashes? We’re blocked from shipping.",
+  },
+  {
+    id: "fb-013",
+    source: "twitter",
+    author: "@frontendfan",
+    created_at: "2026-01-10T14:12:00Z",
+    text: "Dark mode for the dashboard would be amazing 👀",
+  },
+  {
+    id: "fb-014",
+    source: "forum",
+    author: "ui_feedback",
+    created_at: "2026-01-10T15:01:00Z",
+    text: "The dashboard is really bright at night. A dark mode option would help.",
+  },
+  {
+    id: "fb-015",
+    source: "discord",
+    author: "night_coder",
+    created_at: "2026-01-10T15:22:00Z",
+    text: "Please add dark mode. My eyes hurt 😅",
+  },
+  {
+    id: "fb-016",
+    source: "support",
+    author: "security_team",
+    created_at: "2026-01-09T11:30:00Z",
+    text: "We need SSO support for Okta before we can roll this out company-wide.",
+  },
+  {
+    id: "fb-017",
+    source: "email",
+    author: "it@enterprise.org",
+    created_at: "2026-01-09T12:10:00Z",
+    text: "Lack of SAML/SSO is currently a blocker for adoption.",
+  },
+  {
+    id: "fb-018",
+    source: "github",
+    author: "api_user",
+    created_at: "2026-01-08T09:05:00Z",
+    text: "Rate limit errors are hard to debug. Can we get better error messages?",
+  },
+  {
+    id: "fb-019",
+    source: "forum",
+    author: "dx_matters",
+    created_at: "2026-01-08T10:18:00Z",
+    text: "When hitting rate limits, it’s unclear how long to wait before retrying.",
+  },
+  {
+    id: "fb-020",
+    source: "twitter",
+    author: "@happyuser",
+    created_at: "2026-01-07T16:45:00Z",
+    text: "Shoutout to the support team, super fast and helpful responses 🙌",
+  },
+] as const;
 
 const DEFAULT_CLASSIFICATION: Classification = {
   sentiment: "neutral",
@@ -79,6 +225,35 @@ const DEFAULT_CLASSIFICATION: Classification = {
   summary: "General product feedback.",
   tags: ["general"],
 };
+
+function deriveClusterLabel(text: string): { title: string; theme_summary: string } {
+  const lower = text.toLowerCase();
+  if (lower.includes("504") || lower.includes("timeout") || lower.includes("latency")) {
+    return { title: "API reliability", theme_summary: "API timeouts and latency regressions." };
+  }
+  if (lower.includes("docs") || lower.includes("documentation") || lower.includes("token")) {
+    return { title: "Documentation clarity", theme_summary: "Users struggle with docs and onboarding steps." };
+  }
+  if (lower.includes("billing") || lower.includes("invoice") || lower.includes("charged")) {
+    return { title: "Billing accuracy", theme_summary: "Billing and invoice discrepancies reported." };
+  }
+  if (lower.includes("android") || lower.includes("sdk")) {
+    return { title: "Android stability", theme_summary: "Android SDK crashes and stability issues." };
+  }
+  if (lower.includes("dark mode")) {
+    return { title: "Dark mode request", theme_summary: "Requests for a darker dashboard theme." };
+  }
+  if (lower.includes("sso") || lower.includes("saml") || lower.includes("okta")) {
+    return { title: "SSO adoption blockers", theme_summary: "Enterprise SSO requirements blocking rollout." };
+  }
+  if (lower.includes("rate limit")) {
+    return { title: "Rate limit UX", theme_summary: "Unclear rate limit errors and retry guidance." };
+  }
+  if (lower.includes("support") && (lower.includes("fast") || lower.includes("helpful"))) {
+    return { title: "Support praise", theme_summary: "Positive feedback on support responsiveness." };
+  }
+  return { title: "Product feedback", theme_summary: "General product feedback theme." };
+}
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data, null, 2), {
@@ -304,10 +479,11 @@ async function processFeedbackMessage(env: Env, feedbackId: string): Promise<voi
     shouldUpsertVector = false;
     if (!clusterId) {
       clusterId = `c_${crypto.randomUUID()}`;
+      const derived = deriveClusterLabel(row.text);
       await env.DB.prepare(
         "INSERT INTO clusters (cluster_id, title, theme_summary, count, last_seen_at) VALUES (?, ?, ?, ?, ?)"
       )
-        .bind(clusterId, "New theme", "Cluster created from feedback.", 0, row.created_at)
+        .bind(clusterId, derived.title, derived.theme_summary, 0, row.created_at)
         .run();
     }
   } else {
@@ -331,10 +507,11 @@ async function processFeedbackMessage(env: Env, feedbackId: string): Promise<voi
         clusterId = best.metadata.cluster_id as string;
       } else {
         clusterId = `c_${crypto.randomUUID()}`;
+        const derived = deriveClusterLabel(row.text);
         await env.DB.prepare(
           "INSERT INTO clusters (cluster_id, title, theme_summary, count, last_seen_at) VALUES (?, ?, ?, ?, ?)"
         )
-          .bind(clusterId, "New theme", "Cluster created from feedback.", 0, row.created_at)
+          .bind(clusterId, derived.title, derived.theme_summary, 0, row.created_at)
           .run();
       }
     }
@@ -361,6 +538,27 @@ async function processFeedbackMessage(env: Env, feedbackId: string): Promise<voi
       "UPDATE clusters SET count = count + 1, last_seen_at = ? WHERE cluster_id = ?"
     )
       .bind(row.created_at, clusterId)
+      .run();
+  }
+
+  const clusterMeta = await env.DB.prepare(
+    "SELECT title, theme_summary FROM clusters WHERE cluster_id = ?"
+  )
+    .bind(clusterId)
+    .first();
+  const title = (clusterMeta?.title as string | null) ?? null;
+  const themeSummary = (clusterMeta?.theme_summary as string | null) ?? null;
+  const isPlaceholder =
+    !title ||
+    !themeSummary ||
+    title === "New theme" ||
+    themeSummary === "Cluster created from feedback.";
+  if (isPlaceholder) {
+    const derived = deriveClusterLabel(row.text);
+    await env.DB.prepare(
+      "UPDATE clusters SET title = ?, theme_summary = ? WHERE cluster_id = ?"
+    )
+      .bind(derived.title, derived.theme_summary, clusterId)
       .run();
   }
 
@@ -486,7 +684,7 @@ async function processFeedbackIds(env: Env, ids: string[], ctx: ExecutionContext
 
 async function handleOverview(env: Env): Promise<Response> {
   const topClusters = await env.DB.prepare(
-    "SELECT cluster_id, title, count, last_seen_at FROM clusters ORDER BY count DESC LIMIT 10"
+    "SELECT cluster_id, title, theme_summary, count, last_seen_at FROM clusters ORDER BY count DESC LIMIT 10"
   ).all();
   const urgentHighValue = await env.DB.prepare(
     "SELECT id, source, summary, urgency, value, cluster_id FROM feedback_items WHERE urgency = 'high' AND value = 'high' AND duplicate_of IS NULL ORDER BY created_at DESC LIMIT 20"
@@ -511,6 +709,7 @@ async function handleOverview(env: Env): Promise<Response> {
     top_clusters: topClusters.results.map((row) => ({
       cluster_id: row.cluster_id as string,
       title: row.title as string | null,
+      theme_summary: row.theme_summary as string | null,
       count: Number(row.count ?? 0),
       last_seen_at: row.last_seen_at as string | null,
     })),
@@ -526,6 +725,45 @@ async function handleOverview(env: Env): Promise<Response> {
   };
 
   return jsonResponse(response);
+}
+
+async function handleSeed(env: Env, ctx: ExecutionContext): Promise<Response> {
+  const inserts: D1PreparedStatement[] = [];
+  const ids: string[] = [];
+  for (const item of SEEDED_MOCK_DATA) {
+    inserts.push(
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO feedback_items (id, source, author, text, created_at) VALUES (?, ?, ?, ?, ?)"
+      ).bind(item.id, item.source, item.author, item.text, item.created_at)
+    );
+    ids.push(item.id);
+  }
+  await env.DB.batch(inserts);
+  processFeedbackIds(env, ids, ctx);
+  return jsonResponse({ inserted: SEEDED_MOCK_DATA.length, enqueued: 0 });
+}
+
+async function handleRefreshClusters(env: Env): Promise<Response> {
+  const clusters = await env.DB.prepare(
+    "SELECT cluster_id FROM clusters ORDER BY last_seen_at DESC"
+  ).all();
+  let updated = 0;
+  for (const row of clusters.results) {
+    const latest = await env.DB.prepare(
+      "SELECT text FROM feedback_items WHERE cluster_id = ? AND duplicate_of IS NULL ORDER BY created_at DESC LIMIT 1"
+    )
+      .bind(row.cluster_id)
+      .first();
+    if (!latest) continue;
+    const derived = deriveClusterLabel(latest.text as string);
+    await env.DB.prepare(
+      "UPDATE clusters SET title = ?, theme_summary = ? WHERE cluster_id = ?"
+    )
+      .bind(derived.title, derived.theme_summary, row.cluster_id)
+      .run();
+    updated += 1;
+  }
+  return jsonResponse({ updated });
 }
 
 async function handleCluster(env: Env, clusterId: string): Promise<Response> {
@@ -613,72 +851,149 @@ function dashboardPage(): Response {
     <meta charset="utf-8" />
     <title>SignalBoard</title>
     <style>
-      body { font-family: Arial, sans-serif; margin: 24px; }
+      :root {
+        color-scheme: light;
+        --bg: #f7f7f8;
+        --panel: #ffffff;
+        --text: #1f2933;
+        --muted: #667085;
+        --border: #e5e7eb;
+        --accent: #1d4ed8;
+        --accent-soft: #e0e7ff;
+        --success: #16a34a;
+        --warning: #d97706;
+        --danger: #dc2626;
+      }
+      * { box-sizing: border-box; }
+      body {
+        font-family: "Inter", "Segoe UI", Arial, sans-serif;
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+      }
+      header {
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+        padding: 20px 24px;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+      }
+      header h1 { margin: 0; font-size: 24px; }
+      header p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+      .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
       .section { margin-bottom: 24px; }
-      .card { padding: 12px; border: 1px solid #e0e0e0; border-radius: 8px; margin-bottom: 12px; }
-      button { padding: 8px 12px; }
+      .section-title { font-size: 18px; margin: 0 0 12px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+      .card {
+        padding: 16px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--panel);
+        box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+      }
+      .cluster-link {
+        color: var(--accent);
+        font-weight: 600;
+        text-decoration: none;
+      }
+      .cluster-meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+      .pill.positive { background: #dcfce7; color: var(--success); }
+      .pill.neutral { background: #fef9c3; color: var(--warning); }
+      .pill.negative { background: #fee2e2; color: var(--danger); }
+      .empty {
+        padding: 16px;
+        border: 1px dashed var(--border);
+        border-radius: 12px;
+        color: var(--muted);
+        background: #fafafa;
+      }
+      footer { padding: 16px 24px 32px; color: var(--muted); font-size: 12px; }
     </style>
   </head>
   <body>
-    <h1>SignalBoard Dashboard</h1>
+    <header>
+      <h1>SignalBoard Dashboard</h1>
+      <p>Live view of feedback signals, urgent issues, and sentiment trends.</p>
+    </header>
+    <div class="container">
     <div class="section">
-      <button id="mockBtn">Generate Mock Data</button>
-      <span id="mockResult"></span>
+      <div class="section-title">Top clusters</div>
+      <div id="clusters" class="grid"></div>
     </div>
     <div class="section">
-      <h2>Top Clusters</h2>
-      <div id="clusters"></div>
+      <div class="section-title">Urgent + high value</div>
+      <div id="urgent" class="grid"></div>
     </div>
     <div class="section">
-      <h2>Urgent + High Value</h2>
-      <div id="urgent"></div>
+      <div class="section-title">Sentiment breakdown</div>
+      <div id="sentiment" class="card"></div>
     </div>
     <div class="section">
-      <h2>Sentiment Breakdown</h2>
-      <div id="sentiment"></div>
+      <a class="cluster-link" href="/inbox">View daily digests</a>
     </div>
-    <div class="section">
-      <a href="/inbox">View Daily Digests</a>
     </div>
+    <footer class="container">Data refreshes when the page reloads.</footer>
     <script>
-      const mockBtn = document.getElementById("mockBtn");
-      const mockResult = document.getElementById("mockResult");
-      mockBtn.addEventListener("click", async () => {
-        mockResult.textContent = "Generating...";
-        const res = await fetch("/api/mock/generate", { method: "POST" });
-        const data = await res.json();
-        mockResult.textContent = "Inserted " + data.inserted;
-        await loadOverview();
-      });
+      const clusters = document.getElementById("clusters");
+      const urgent = document.getElementById("urgent");
+      const sentiment = document.getElementById("sentiment");
+
+      function renderEmpty(container, message) {
+        container.innerHTML = "<div class='empty'>" + message + "</div>";
+      }
 
       async function loadOverview() {
+        clusters.innerHTML = "<div class='card'>Loading clusters...</div>";
+        urgent.innerHTML = "<div class='card'>Loading urgent items...</div>";
+        sentiment.innerHTML = "Loading sentiment...";
         const res = await fetch("/api/dashboard/overview");
         const data = await res.json();
-        const clusters = document.getElementById("clusters");
+
         clusters.innerHTML = "";
-        data.top_clusters.forEach((cluster) => {
-          const div = document.createElement("div");
-          div.className = "card";
-          const title = cluster.title || "Untitled cluster";
-          div.innerHTML = "<a href='/cluster/" + cluster.cluster_id + "'>" + title + "</a>" +
-            " (" + cluster.count + ")<br/><small>Last seen: " + (cluster.last_seen_at || "n/a") + "</small>";
-          clusters.appendChild(div);
-        });
+        if (!data.top_clusters.length) {
+          renderEmpty(clusters, "No clusters yet. Seed or ingest feedback to get started.");
+        } else {
+          data.top_clusters.forEach((cluster) => {
+            const div = document.createElement("div");
+            div.className = "card";
+            const title = cluster.theme_summary || cluster.title || "Untitled cluster";
+            div.innerHTML =
+              "<a class='cluster-link' href='/cluster/" + cluster.cluster_id + "'>" + title + "</a>" +
+              " <span class='pill'>" + cluster.count + " items</span>" +
+              "<div class='cluster-meta'>Last seen: " + (cluster.last_seen_at || "n/a") + "</div>";
+            clusters.appendChild(div);
+          });
+        }
 
-        const urgent = document.getElementById("urgent");
         urgent.innerHTML = "";
-        data.urgent_high_value.forEach((item) => {
-          const div = document.createElement("div");
-          div.className = "card";
-          div.innerHTML = "<strong>" + item.source + "</strong>: " + (item.summary || "No summary");
-          urgent.appendChild(div);
-        });
+        if (!data.urgent_high_value.length) {
+          renderEmpty(urgent, "No urgent high-value items yet.");
+        } else {
+          data.urgent_high_value.forEach((item) => {
+            const div = document.createElement("div");
+            div.className = "card";
+            div.innerHTML =
+              "<strong>" + item.source + "</strong>" +
+              "<div style='margin-top:6px;color:var(--muted);'>" + (item.summary || "No summary") + "</div>";
+            urgent.appendChild(div);
+          });
+        }
 
-        const sentiment = document.getElementById("sentiment");
-        sentiment.innerHTML = "";
-        sentiment.innerHTML = "Positive: " + data.sentiment_breakdown.positive +
-          " | Neutral: " + data.sentiment_breakdown.neutral +
-          " | Negative: " + data.sentiment_breakdown.negative;
+        sentiment.innerHTML =
+          "<span class='pill positive'>Positive " + data.sentiment_breakdown.positive + "</span> " +
+          "<span class='pill neutral'>Neutral " + data.sentiment_breakdown.neutral + "</span> " +
+          "<span class='pill negative'>Negative " + data.sentiment_breakdown.negative + "</span>";
       }
 
       loadOverview();
@@ -695,15 +1010,24 @@ function clusterPage(clusterId: string): Response {
     <meta charset="utf-8" />
     <title>Cluster ${clusterId}</title>
     <style>
-      body { font-family: Arial, sans-serif; margin: 24px; }
-      .card { padding: 12px; border: 1px solid #e0e0e0; border-radius: 8px; margin-bottom: 12px; }
+      body { font-family: "Inter", "Segoe UI", Arial, sans-serif; margin: 0; background: #f7f7f8; color: #1f2933; }
+      header { padding: 20px 24px; border-bottom: 1px solid #e5e7eb; background: #ffffff; }
+      a { color: #1d4ed8; text-decoration: none; }
+      .container { max-width: 900px; margin: 0 auto; padding: 24px; }
+      .card { padding: 16px; border: 1px solid #e5e7eb; border-radius: 12px; margin-bottom: 12px; background: #ffffff; }
+      .muted { color: #667085; }
     </style>
   </head>
   <body>
-    <a href="/">Back</a>
-    <h1 id="title">Cluster</h1>
-    <p id="summary"></p>
-    <div id="feedback"></div>
+    <header>
+      <a href="/">Back to dashboard</a>
+    </header>
+    <div class="container">
+      <h1 id="title">Cluster</h1>
+      <p id="summary" class="muted"></p>
+      <h3>Recent feedback</h3>
+      <div id="feedback"></div>
+    </div>
     <script>
       async function loadCluster() {
         const res = await fetch("/api/dashboard/cluster/${clusterId}");
@@ -712,10 +1036,16 @@ function clusterPage(clusterId: string): Response {
         document.getElementById("summary").textContent = data.cluster?.theme_summary || "";
         const feedback = document.getElementById("feedback");
         feedback.innerHTML = "";
+        if (!data.feedback.length) {
+          feedback.innerHTML = "<div class='card muted'>No feedback yet for this cluster.</div>";
+          return;
+        }
         data.feedback.forEach((item) => {
           const div = document.createElement("div");
           div.className = "card";
-          div.innerHTML = "<strong>" + item.source + "</strong>: " + (item.summary || item.text);
+          div.innerHTML =
+            "<strong>" + item.source + "</strong>" +
+            "<div class='muted' style='margin-top:6px;'>" + (item.summary || item.text) + "</div>";
           feedback.appendChild(div);
         });
       }
@@ -733,23 +1063,56 @@ function digestPage(): Response {
     <meta charset="utf-8" />
     <title>Daily Digests</title>
     <style>
-      body { font-family: Arial, sans-serif; margin: 24px; }
-      .card { padding: 12px; border: 1px solid #e0e0e0; border-radius: 8px; margin-bottom: 12px; }
+      body { font-family: "Inter", "Segoe UI", Arial, sans-serif; margin: 0; background: #f7f7f8; color: #1f2933; }
+      header { padding: 20px 24px; border-bottom: 1px solid #e5e7eb; background: #ffffff; }
+      a { color: #1d4ed8; text-decoration: none; }
+      .container { max-width: 900px; margin: 0 auto; padding: 24px; }
+      .card { padding: 16px; border: 1px solid #e5e7eb; border-radius: 12px; margin-bottom: 12px; background: #ffffff; }
+      .muted { color: #667085; }
+      ul { padding-left: 18px; }
     </style>
   </head>
   <body>
-    <a href="/">Back</a>
-    <h1>Daily Digests</h1>
-    <div id="digests"></div>
+    <header>
+      <a href="/">Back to dashboard</a>
+    </header>
+    <div class="container">
+      <h1>Daily Digests</h1>
+      <p class="muted">Generated at 9am America/New_York.</p>
+      <div id="digests"></div>
+    </div>
     <script>
       function renderMarkdown(md) {
-        return md
-          .replace(/^### (.*)$/gm, "<h3>$1</h3>")
-          .replace(/^## (.*)$/gm, "<h2>$1</h2>")
-          .replace(/^# (.*)$/gm, "<h1>$1</h1>")
-          .replace(/^\\- (.*)$/gm, "<li>$1</li>")
-          .replace(/<li>(.*)<\\/li>/g, "<ul><li>$1</li></ul>")
-          .replace(/\\n\\n/g, "<br/><br/>");
+        const lines = md.split(/\\n/);
+        let html = "";
+        let inList = false;
+        for (const line of lines) {
+          if (line.startsWith("- ")) {
+            if (!inList) {
+              html += "<ul>";
+              inList = true;
+            }
+            html += "<li>" + line.slice(2) + "</li>";
+          } else {
+            if (inList) {
+              html += "</ul>";
+              inList = false;
+            }
+            if (line.startsWith("### ")) {
+              html += "<h3>" + line.slice(4) + "</h3>";
+            } else if (line.startsWith("## ")) {
+              html += "<h2>" + line.slice(3) + "</h2>";
+            } else if (line.startsWith("# ")) {
+              html += "<h1>" + line.slice(2) + "</h1>";
+            } else if (line.trim() === "") {
+              html += "<br/>";
+            } else {
+              html += "<p>" + line + "</p>";
+            }
+          }
+        }
+        if (inList) html += "</ul>";
+        return html;
       }
 
       async function loadDigests() {
@@ -757,6 +1120,10 @@ function digestPage(): Response {
         const data = await res.json();
         const container = document.getElementById("digests");
         container.innerHTML = "";
+        if (!data.digests.length) {
+          container.innerHTML = "<div class='card muted'>No digests yet.</div>";
+          return;
+        }
         data.digests.forEach((digest) => {
           const div = document.createElement("div");
           div.className = "card";
@@ -811,6 +1178,14 @@ async function handleRequest(
     const result = await generateMockFeedback(env);
     processFeedbackIds(env, result.ids, ctx);
     return jsonResponse({ inserted: result.inserted, enqueued: result.enqueued });
+  }
+  if (path === "/api/mock/seed") {
+    if (request.method !== "POST") return methodNotAllowed();
+    return handleSeed(env, ctx);
+  }
+  if (path === "/api/mock/refresh-clusters") {
+    if (request.method !== "POST") return methodNotAllowed();
+    return handleRefreshClusters(env);
   }
 
   if (path === "/api/ingest") {
