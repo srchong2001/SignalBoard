@@ -491,17 +491,26 @@ async function processFeedbackMessage(env: Env, feedbackId: string): Promise<voi
   let clusterId = row.cluster_id as string | null;
   let duplicateOf: string | null = null;
   let shouldUpsertVector = true;
+  const derived = deriveClusterLabel(row.text);
 
   if (!embedding) {
     shouldUpsertVector = false;
     if (!clusterId) {
-      clusterId = `c_${crypto.randomUUID()}`;
-      const derived = deriveClusterLabel(row.text);
-      await env.DB.prepare(
-        "INSERT INTO clusters (cluster_id, title, theme_summary, count, last_seen_at) VALUES (?, ?, ?, ?, ?)"
+      const existing = await env.DB.prepare(
+        "SELECT cluster_id FROM clusters WHERE title = ? LIMIT 1"
       )
-        .bind(clusterId, derived.title, derived.theme_summary, 0, row.created_at)
-        .run();
+        .bind(derived.title)
+        .first();
+      if (existing?.cluster_id) {
+        clusterId = existing.cluster_id as string;
+      } else {
+        clusterId = `c_${crypto.randomUUID()}`;
+        await env.DB.prepare(
+          "INSERT INTO clusters (cluster_id, title, theme_summary, count, last_seen_at) VALUES (?, ?, ?, ?, ?)"
+        )
+          .bind(clusterId, derived.title, derived.theme_summary, 0, row.created_at)
+          .run();
+      }
     }
   } else {
     const queryResult = await env.VECTORIZE.query(embedding, {
@@ -523,13 +532,21 @@ async function processFeedbackMessage(env: Env, feedbackId: string): Promise<voi
       if (best && best.metadata?.cluster_id) {
         clusterId = best.metadata.cluster_id as string;
       } else {
-        clusterId = `c_${crypto.randomUUID()}`;
-        const derived = deriveClusterLabel(row.text);
-        await env.DB.prepare(
-          "INSERT INTO clusters (cluster_id, title, theme_summary, count, last_seen_at) VALUES (?, ?, ?, ?, ?)"
+        const existing = await env.DB.prepare(
+          "SELECT cluster_id FROM clusters WHERE title = ? LIMIT 1"
         )
-          .bind(clusterId, derived.title, derived.theme_summary, 0, row.created_at)
-          .run();
+          .bind(derived.title)
+          .first();
+        if (existing?.cluster_id) {
+          clusterId = existing.cluster_id as string;
+        } else {
+          clusterId = `c_${crypto.randomUUID()}`;
+          await env.DB.prepare(
+            "INSERT INTO clusters (cluster_id, title, theme_summary, count, last_seen_at) VALUES (?, ?, ?, ?, ?)"
+          )
+            .bind(clusterId, derived.title, derived.theme_summary, 0, row.created_at)
+            .run();
+        }
       }
     }
   }
@@ -571,7 +588,6 @@ async function processFeedbackMessage(env: Env, feedbackId: string): Promise<voi
     title === "New theme" ||
     themeSummary === "Cluster created from feedback.";
   if (isPlaceholder) {
-    const derived = deriveClusterLabel(row.text);
     await env.DB.prepare(
       "UPDATE clusters SET title = ?, theme_summary = ? WHERE cluster_id = ?"
     )
@@ -771,7 +787,12 @@ async function handleRefreshClusters(env: Env): Promise<Response> {
     )
       .bind(row.cluster_id)
       .first();
-    if (!latest) continue;
+    if (!latest) {
+      await env.DB.prepare("DELETE FROM clusters WHERE cluster_id = ?")
+        .bind(row.cluster_id)
+        .run();
+      continue;
+    }
     const derived = deriveClusterLabel(latest.text as string);
     await env.DB.prepare(
       "UPDATE clusters SET title = ?, theme_summary = ? WHERE cluster_id = ?"
@@ -781,6 +802,94 @@ async function handleRefreshClusters(env: Env): Promise<Response> {
     updated += 1;
   }
   return jsonResponse({ updated });
+}
+
+async function recalcClusterStats(env: Env): Promise<void> {
+  const rows = await env.DB.prepare("SELECT cluster_id FROM clusters").all();
+  for (const row of rows.results) {
+    const stats = await env.DB.prepare(
+      "SELECT COUNT(*) as count, MAX(created_at) as last_seen_at FROM feedback_items WHERE cluster_id = ? AND duplicate_of IS NULL"
+    )
+      .bind(row.cluster_id)
+      .first();
+    const count = Number(stats?.count ?? 0);
+    const lastSeen = (stats?.last_seen_at as string | null) ?? null;
+    if (count === 0) {
+      await env.DB.prepare("DELETE FROM clusters WHERE cluster_id = ?")
+        .bind(row.cluster_id)
+        .run();
+      continue;
+    }
+    await env.DB.prepare(
+      "UPDATE clusters SET count = ?, last_seen_at = ? WHERE cluster_id = ?"
+    )
+      .bind(count, lastSeen, row.cluster_id)
+      .run();
+  }
+}
+
+async function handleMergeClusters(env: Env): Promise<Response> {
+  const rows = await env.DB.prepare(
+    "SELECT cluster_id, title, theme_summary FROM clusters ORDER BY last_seen_at DESC"
+  ).all();
+
+  const canonicalByTitle = new Map<string, string>();
+  const toDelete: string[] = [];
+
+  for (const row of rows.results) {
+    let title = (row.title as string | null) ?? null;
+    const theme = (row.theme_summary as string | null) ?? null;
+    const isPlaceholder =
+      !title ||
+      !theme ||
+      title === "New theme" ||
+      theme === "Cluster created from feedback.";
+
+    if (isPlaceholder) {
+      const latest = await env.DB.prepare(
+        "SELECT text FROM feedback_items WHERE cluster_id = ? AND duplicate_of IS NULL ORDER BY created_at DESC LIMIT 1"
+      )
+        .bind(row.cluster_id)
+        .first();
+      if (!latest) {
+        toDelete.push(row.cluster_id as string);
+        continue;
+      }
+      const derived = deriveClusterLabel(latest.text as string);
+      title = derived.title;
+      await env.DB.prepare(
+        "UPDATE clusters SET title = ?, theme_summary = ? WHERE cluster_id = ?"
+      )
+        .bind(derived.title, derived.theme_summary, row.cluster_id)
+        .run();
+    }
+
+    const key = (title ?? "").trim().toLowerCase();
+    if (!key) {
+      toDelete.push(row.cluster_id as string);
+      continue;
+    }
+    if (!canonicalByTitle.has(key)) {
+      canonicalByTitle.set(key, row.cluster_id as string);
+    } else {
+      const canonical = canonicalByTitle.get(key) as string;
+      await env.DB.prepare(
+        "UPDATE feedback_items SET cluster_id = ? WHERE cluster_id = ?"
+      )
+        .bind(canonical, row.cluster_id)
+        .run();
+      toDelete.push(row.cluster_id as string);
+    }
+  }
+
+  for (const clusterId of toDelete) {
+    await env.DB.prepare("DELETE FROM clusters WHERE cluster_id = ?")
+      .bind(clusterId)
+      .run();
+  }
+
+  await recalcClusterStats(env);
+  return jsonResponse({ merged: toDelete.length });
 }
 
 async function handleCluster(env: Env, clusterId: string): Promise<Response> {
@@ -1237,6 +1346,10 @@ async function handleRequest(
   if (path === "/api/mock/refresh-clusters") {
     if (request.method !== "POST") return methodNotAllowed();
     return handleRefreshClusters(env);
+  }
+  if (path === "/api/mock/merge-clusters") {
+    if (request.method !== "POST") return methodNotAllowed();
+    return handleMergeClusters(env);
   }
 
   if (path === "/api/ingest") {
