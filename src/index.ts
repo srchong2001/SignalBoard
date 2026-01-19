@@ -218,6 +218,23 @@ const SEEDED_MOCK_DATA = [
   },
 ] as const;
 
+const MOCK_DIGEST_MD = `# Daily Digest
+
+## Top themes
+- API reliability: elevated 504s and latency under moderate load
+- Documentation clarity: confusion around API tokens and onboarding
+- Billing accuracy: invoice mismatches and double charges
+
+## Fires
+- API timeouts affecting production workloads
+- Android 14 SDK crash blocking releases
+
+## Suggested next actions
+- Triage API latency regression and post status update
+- Publish a short auth/token setup guide
+- Audit recent billing changes and reconcile invoices
+`;
+
 const DEFAULT_CLASSIFICATION: Classification = {
   sentiment: "neutral",
   urgency: "medium",
@@ -844,6 +861,16 @@ async function handleDigests(env: Env): Promise<Response> {
   return jsonResponse(response);
 }
 
+async function handleDigestMock(env: Env): Promise<Response> {
+  const dateKey = formatDateNY(new Date());
+  await env.DB.prepare(
+    "INSERT INTO digests (id, date, content_md) VALUES (?, ?, ?)"
+  )
+    .bind(crypto.randomUUID(), dateKey, MOCK_DIGEST_MD)
+    .run();
+  return jsonResponse({ inserted: 1, date: dateKey });
+}
+
 function dashboardPage(): Response {
   const html = `<!doctype html>
 <html>
@@ -1063,13 +1090,30 @@ function digestPage(): Response {
     <meta charset="utf-8" />
     <title>Daily Digests</title>
     <style>
-      body { font-family: "Inter", "Segoe UI", Arial, sans-serif; margin: 0; background: #f7f7f8; color: #1f2933; }
-      header { padding: 20px 24px; border-bottom: 1px solid #e5e7eb; background: #ffffff; }
-      a { color: #1d4ed8; text-decoration: none; }
+      :root {
+        --bg: #f7f7f8;
+        --panel: #ffffff;
+        --text: #1f2933;
+        --muted: #667085;
+        --border: #e5e7eb;
+        --accent: #1d4ed8;
+        --accent-soft: #e0e7ff;
+      }
+      body { font-family: "Inter", "Segoe UI", Arial, sans-serif; margin: 0; background: var(--bg); color: var(--text); }
+      header { padding: 20px 24px; border-bottom: 1px solid var(--border); background: var(--panel); }
+      a { color: var(--accent); text-decoration: none; }
       .container { max-width: 900px; margin: 0 auto; padding: 24px; }
-      .card { padding: 16px; border: 1px solid #e5e7eb; border-radius: 12px; margin-bottom: 12px; background: #ffffff; }
-      .muted { color: #667085; }
-      ul { padding-left: 18px; }
+      .card { padding: 20px; border: 1px solid var(--border); border-radius: 16px; margin-bottom: 16px; background: var(--panel); box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04); }
+      .muted { color: var(--muted); }
+      .digest-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+      .digest-date { background: var(--accent-soft); color: var(--accent); padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+      .digest-content h1 { font-size: 22px; margin: 8px 0 12px; }
+      .digest-content h2 { font-size: 18px; margin: 18px 0 8px; }
+      .digest-content h3 { font-size: 16px; margin: 14px 0 6px; }
+      .digest-content p { margin: 6px 0; color: var(--text); }
+      .digest-content ul { padding-left: 18px; margin: 8px 0; }
+      .digest-content li { margin: 6px 0; }
+      .empty { padding: 16px; border: 1px dashed var(--border); border-radius: 12px; background: #fafafa; color: var(--muted); }
     </style>
   </head>
   <body>
@@ -1078,7 +1122,7 @@ function digestPage(): Response {
     </header>
     <div class="container">
       <h1>Daily Digests</h1>
-      <p class="muted">Generated at 9am America/New_York.</p>
+      <p class="muted">Generated at 9am America/New_York. Each digest highlights themes, fires, and suggested actions.</p>
       <div id="digests"></div>
     </div>
     <script>
@@ -1087,6 +1131,9 @@ function digestPage(): Response {
         let html = "";
         let inList = false;
         for (const line of lines) {
+          if (line.startsWith("# ")) {
+            continue;
+          }
           if (line.startsWith("- ")) {
             if (!inList) {
               html += "<ul>";
@@ -1121,13 +1168,17 @@ function digestPage(): Response {
         const container = document.getElementById("digests");
         container.innerHTML = "";
         if (!data.digests.length) {
-          container.innerHTML = "<div class='card muted'>No digests yet.</div>";
+          container.innerHTML = "<div class='empty'>No digests yet.</div>";
           return;
         }
         data.digests.forEach((digest) => {
           const div = document.createElement("div");
           div.className = "card";
-          div.innerHTML = "<strong>" + digest.date + "</strong><div>" + renderMarkdown(digest.content_md) + "</div>";
+          div.innerHTML =
+            "<div class='digest-header'>" +
+            "<div class='digest-date'>" + digest.date + "</div>" +
+            "</div>" +
+            "<div class='digest-content'>" + renderMarkdown(digest.content_md) + "</div>";
           container.appendChild(div);
         });
       }
@@ -1207,6 +1258,10 @@ async function handleRequest(
   if (path === "/api/digests") {
     if (request.method !== "GET") return methodNotAllowed();
     return handleDigests(env);
+  }
+  if (path === "/api/digests/mock") {
+    if (request.method !== "POST") return methodNotAllowed();
+    return handleDigestMock(env);
   }
 
   return notFound();
