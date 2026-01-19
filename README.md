@@ -11,6 +11,10 @@ SignalBoard is a Cloudflare Workers MVP that aggregates product feedback, cluste
 - Cron trigger for daily digest generation
 - Minimal UI (HTML + vanilla JS)
 
+## Live demo
+
+- https://signalboard.zchong2.workers.dev
+
 ## Local development
 
 ```bash
