@@ -4,6 +4,7 @@ compatibility_date = "2025-01-15"
 
 [vars]
 DEV_MODE = "true"
+FREE_PLAN = "true"
 
 [[d1_databases]]
 binding = "DB"

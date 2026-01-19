@@ -56,6 +56,7 @@ wrangler deploy
 ## Environment flags
 
 - `DEV_MODE=true` allows deterministic mock classification if AI binding is missing.
+- `FREE_PLAN=true` caps mock generation to 150 items per run to stay within free quotas.
 
 ## API endpoints
 
@@ -102,6 +103,11 @@ curl http://127.0.0.1:8787/api/digests
 - Cluster counts exclude duplicates (items with `duplicate_of`).
 - New clusters are created when similarity < 0.82.
 - Duplicates are marked when similarity >= 0.90 and inherit the cluster.
+
+## Free plan guidance
+
+- Keep `FREE_PLAN=true` to limit mock ingestion volume.
+- Workers AI usage is per item; avoid repeated bulk mock runs.
 
 ## Wrangler config
 

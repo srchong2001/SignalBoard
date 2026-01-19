@@ -4,6 +4,7 @@ export interface Env {
   FEEDBACK_QUEUE: Queue;
   AI: Ai;
   DEV_MODE: string;
+  FREE_PLAN: string;
 }
 
 type Sentiment = "positive" | "neutral" | "negative";
@@ -264,12 +265,13 @@ async function generateDailyDigest(env: Env, payload: unknown): Promise<string> 
 async function embedText(env: Env, text: string): Promise<number[] | null> {
   if (!env.AI) return null;
   try {
-    const result = await env.AI.run("@cf/baai/bge-base-en-v1.5", { text });
-    if (Array.isArray(result.data) && Array.isArray(result.data[0])) {
-      return result.data[0] as number[];
+    const result = (await env.AI.run("@cf/baai/bge-base-en-v1.5", { text })) as unknown;
+    const data = (result as { data?: unknown }).data ?? result;
+    if (Array.isArray(data) && Array.isArray(data[0])) {
+      return data[0] as number[];
     }
-    if (Array.isArray(result.data)) {
-      return result.data as number[];
+    if (Array.isArray(data)) {
+      return data as number[];
     }
     return null;
   } catch {
@@ -278,11 +280,20 @@ async function embedText(env: Env, text: string): Promise<number[] | null> {
 }
 
 async function processFeedbackMessage(env: Env, feedbackId: string): Promise<void> {
-  const row = await env.DB.prepare(
+  const row = (await env.DB.prepare(
     "SELECT id, source, author, text, created_at, cluster_id FROM feedback_items WHERE id = ?"
   )
     .bind(feedbackId)
-    .first();
+    .first()) as
+    | {
+        id: string;
+        source: string;
+        author: string | null;
+        text: string;
+        created_at: string;
+        cluster_id: string | null;
+      }
+    | null;
   if (!row) return;
 
   const embedding = await embedText(env, row.text);
@@ -364,7 +375,7 @@ async function processFeedbackMessage(env: Env, feedbackId: string): Promise<voi
           source: row.source,
           created_at: row.created_at,
           cluster_id: clusterId,
-        },
+        } as Record<string, VectorizeVectorMetadata>,
       },
     ]);
   }
@@ -397,7 +408,9 @@ async function processFeedbackMessage(env: Env, feedbackId: string): Promise<voi
 }
 
 async function generateMockFeedback(env: Env): Promise<{ inserted: number; enqueued: number }> {
-  const total = randomInt(100, 500);
+  const freePlan = env.FREE_PLAN === "true";
+  const maxItems = freePlan ? 150 : 500;
+  const total = randomInt(100, maxItems);
   const topics = [
     "authentication",
     "billing",
